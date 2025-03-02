@@ -1,0 +1,11 @@
+fastapi[all]
+uvicorn[standard]
+tensorflow==2.17.1
+numpy==1.26.4
+pillow
+python-multipart
+opencv-python
+keras==3.5.0
+python-dotenv
+imagekitio
+python-jose
