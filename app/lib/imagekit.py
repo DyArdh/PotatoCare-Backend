@@ -29,7 +29,8 @@ def upload_to_imagekit(prefix, image: Image.Image):
       
     options = UploadFileRequestOptions(
       use_unique_file_name=True,
-      folder=f"/PotatoCare/segmentations/{prefix}/"
+      folder=f"/PotatoCare/segmentations/{prefix}/",
+      is_private_file=False
     )
 
     # Unggah ke ImageKit
@@ -42,5 +43,5 @@ def upload_to_imagekit(prefix, image: Image.Image):
     return {
       "file_id": upload_response.file_id,
       "file_name": upload_response.name,
-      "url": upload_response.url
+      "url": upload_response.url,
     }

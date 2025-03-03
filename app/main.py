@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 import uvicorn
 from dotenv import load_dotenv
+from fastapi.staticfiles import StaticFiles
 
 # Local Import
 from app.config import config
@@ -16,6 +17,9 @@ app = FastAPI()
 
 # Middlewares
 app.middleware("http")(limit_upload_size)
+
+# Static Files
+app.mount("/asset", StaticFiles(directory="asset"), name="asset")
 
 # Routes
 app.include_router(routes)

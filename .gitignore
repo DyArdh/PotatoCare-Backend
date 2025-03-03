@@ -14,3 +14,4 @@ venv-potatocare
 
 # Model
 app/model/**/*.keras
+asset

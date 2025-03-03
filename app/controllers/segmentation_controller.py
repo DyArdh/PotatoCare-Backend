@@ -1,94 +1,82 @@
-from fastapi import UploadFile
-from fastapi.responses import StreamingResponse, JSONResponse
-from io import BytesIO
-from PIL import Image
+import os
+import cv2
 import numpy as np
+import cuid
+from fastapi import UploadFile
+from fastapi.responses import JSONResponse
+from PIL import Image
 from app.model.model import predict, load_unet_model
-from app.lib.imagekit import upload_to_imagekit
-from app.lib.predict_inform import count_class_pixels, get_predicted_class, get_class_probabilities
+from app.lib.predict_inform import count_pixels_per_class, calculate_class_percentages
 
-# Load model U-Net
 model = load_unet_model()
 
-# Define colormap for each class
 COLORMAP = {
-    0: (0, 0, 0),         # Background: Black
-    1: (255, 0, 0),       # Early Blight: Red
-    2: (0, 255, 0),       # Healthy: Green
-    3: (0, 0, 255)        # Late Blight: Blue
+    0: (0, 0, 0),    
+    1: (255, 0, 0),  
+    2: (0, 255, 0),  
+    3: (0, 0, 255)      
 }
+
+BASE_DIR = "asset/segmentation"
+ORIGINAL_DIR = os.path.join(BASE_DIR, "original")
+MASK_NPY_DIR = os.path.join(BASE_DIR, "mask_npy")  
+MASK_PNG_DIR = os.path.join(BASE_DIR, "mask_png")  
+OVERLAY_DIR = os.path.join(BASE_DIR, "overlay")
+
+os.makedirs(ORIGINAL_DIR, exist_ok=True)
+os.makedirs(MASK_NPY_DIR, exist_ok=True)
+os.makedirs(MASK_PNG_DIR, exist_ok=True)
+os.makedirs(OVERLAY_DIR, exist_ok=True)
 
 def apply_colormap(mask):
     """Apply the colormap to the mask."""
-    height, width = mask.shape
-    color_mask = np.zeros((height, width, 3), dtype=np.uint8)
-
+    color_mask = np.zeros((mask.shape[0], mask.shape[1], 3), dtype=np.uint8)
     for class_id, color in COLORMAP.items():
         color_mask[mask == class_id] = color
-
     return color_mask
 
-async def segment_image(file: UploadFile, return_stream: bool = False):
-    # Validasi format file
+async def segment_image(file: UploadFile):
     if file.content_type != "image/png":
         return {"error": "File format not supported. Please upload a PNG image."}
 
-    # Baca file gambar
-    image = Image.open(file.file).convert("RGB")  # Konversi ke RGB
+    file_id = cuid.cuid()
+
+    original_path = os.path.join(ORIGINAL_DIR, f"{file_id}.png")
+    mask_npy_path = os.path.join(MASK_NPY_DIR, f"{file_id}.npy")
+    mask_png_path = os.path.join(MASK_PNG_DIR, f"{file_id}.png")
+    blended_path = os.path.join(OVERLAY_DIR, f"{file_id}.png")
+
+    image = Image.open(file.file).convert("RGB")
     image_np = np.array(image)
 
-    # Prediksi mask segmentasi
     mask = predict(model, image_np)
-    mask_resized = np.argmax(mask[0], axis=-1)  # Pilih kelas dengan probabilitas tertinggi
+    mask_resized = np.argmax(mask[0], axis=-1) 
 
-    # Terapkan colormap pada mask
+    np.save(mask_npy_path, mask_resized)
+
     mask_colored = apply_colormap(mask_resized)
-    mask_image = Image.fromarray(mask_colored)
 
-    # Gabungkan original dengan mask
-    blended = Image.blend(image, mask_image.convert("RGB"), alpha=0.5)
+    cv2.imwrite(original_path, cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)) 
+    cv2.imwrite(mask_png_path, mask_colored) 
+    blended = cv2.addWeighted(image_np, 0.5, mask_colored, 0.5, 0)  
+    cv2.imwrite(blended_path, blended)  
 
-    if return_stream:
-        # Streaming hasil gambar untuk testing
-        output = BytesIO()
+    class_pixel_counts = count_pixels_per_class(mask_resized, exclude_background=True)
+    class_percentages = calculate_class_percentages(class_pixel_counts)
 
-        # Pilih gambar yang ingin di-stream
-        blended.save(output, format="PNG")
-        output.seek(0)
-
-        return StreamingResponse(output, media_type="image/png")
-
-    # Upload hasil ke ImageKit dengan nama file dinamis
-    original_url = upload_to_imagekit("original", image)
-    mask_url = upload_to_imagekit("mask", mask_image)
-    blended_url = upload_to_imagekit("blended", blended)
-    
-    class_pixel_counts = count_class_pixels(mask_resized, exclude_background=True)
-    
-    total_pixels = mask_resized.size  # Total pixels in the mask
-    class_probabilities = get_class_probabilities(class_pixel_counts, total_pixels, exclude_background=True)
-
-    predicted_class = get_predicted_class(class_pixel_counts, exclude_background=True)
-    
-    print("=================================")
-    print(class_probabilities)
-    print(predicted_class)
-    print(class_pixel_counts)
-    
-
-    # Kembalikan hasil URL
     return JSONResponse(
-      {
-        "images": {
-          "original_url": original_url,
-          "mask_url": mask_url,
-          "blended_url": blended_url
+        {
+            "id": file_id,
+            "images": {
+                "original_url": f"/asset/segmentation/original/{file_id}.png",
+                "mask_npy_url": f"/asset/segmentation/mask_npy/{file_id}.npy",
+                "mask_png_url": f"/asset/segmentation/mask_png/{file_id}.png",
+                "blended_url": f"/asset/segmentation/overlay/{file_id}.png"
+            },
+            "predictions": {
+                "total_pixels": class_pixel_counts,
+                "class_percentages": class_percentages
+            }
         },
-        "predictions": {
-          "predicted_class": int(predicted_class),
-          # "class_pixel_counts": class_pixel,
-          # "class_probabilities": class_probabilities
-        }
-      },
-      status_code=200
+        status_code=200
     )

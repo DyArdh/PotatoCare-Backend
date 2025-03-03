@@ -25,4 +25,4 @@ async def protected():
     
 @router.post("/segmentation")
 async def segmentation(image: UploadFile = File(...)):
-  return await segment_image(image, return_stream=False)
+  return await segment_image(image)
